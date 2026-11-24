@@ -7,6 +7,7 @@ import {
   Coffee,
   Download,
   Fingerprint,
+  FlaskConical,
   History,
   LayoutDashboard,
   LocateFixed,
@@ -41,7 +42,7 @@ import {
   type Punch,
 } from './domain';
 
-type Identity = { mode: api.Mode; id: string };
+type Identity = { mode: api.Mode; id: string; adminSessionId?: string };
 type Page = 'today' | 'history' | 'team' | 'settings' | 'audit';
 type Editor =
   | { type: 'attendance'; day?: Day; staffId?: string }
@@ -137,13 +138,7 @@ function Dialog({
     </dialog>
   );
 }
-function Login({
-  onEnter,
-  onDemo,
-}: {
-  onEnter: (id: string) => void;
-  onDemo: (admin: boolean) => void;
-}) {
+function Login({ onEnter, onDemo }: { onEnter: (id: string) => void; onDemo: () => void }) {
   const [email, setEmail] = useState(''),
     [password, setPassword] = useState(''),
     [busy, setBusy] = useState(false),
@@ -264,11 +259,8 @@ function Login({
             <span>Take a look around</span>
           </div>
           <div className="demo-options">
-            <button className="button secondary" onClick={() => onDemo(false)}>
+            <button className="button secondary wide" onClick={onDemo}>
               Staff demo
-            </button>
-            <button className="button secondary" onClick={() => onDemo(true)}>
-              Admin demo
             </button>
           </div>
           <small className="demo-disclaimer">
@@ -299,32 +291,51 @@ export default function App() {
     [online, setOnline] = useState(navigator.onLine);
   const generation = useRef(0);
   useEffect(() => {
-    const demo = sessionStorage.getItem('pb-attendance-demo-actor');
-    if (demo) {
-      setIdentity({ mode: 'demo', id: demo });
-      setBooting(false);
-    } else if (api.cloud)
-      api.cloud.auth
-        .getSession()
-        .then(({ data, error }) => {
-          if (error) setError(error.message);
-          if (data.session) setIdentity({ mode: 'live', id: data.session.user.id });
-          setBooting(false);
-        })
-        .catch((e) => {
-          setError(e.message);
-          setBooting(false);
-        });
-    else setBooting(false);
+    let cancelled = false;
+    async function restore() {
+      try {
+        const demo = sessionStorage.getItem('pb-attendance-demo-actor');
+        if (demo === api.demoStaffId) {
+          if (!cancelled) setIdentity({ mode: 'demo', id: api.demoStaffId });
+          return;
+        }
+        if (demo === api.demoAdminId) {
+          try {
+            const adminSessionId = await api.requireLiveAdmin();
+            if (!cancelled) setIdentity({ mode: 'demo', id: api.demoAdminId, adminSessionId });
+            return;
+          } catch {
+            sessionStorage.removeItem('pb-attendance-demo-actor');
+          }
+        }
+        if (api.cloud) {
+          const { data, error } = await api.cloud.auth.getSession();
+          if (error) throw error;
+          if (!cancelled && data.session) setIdentity({ mode: 'live', id: data.session.user.id });
+        }
+      } catch (e) {
+        if (!cancelled) setError((e as Error).message);
+      } finally {
+        if (!cancelled) setBooting(false);
+      }
+    }
+    restore();
     const timer = setInterval(() => setNow(new Date()), 1000);
     const onOnline = () => setOnline(navigator.onLine);
     window.addEventListener('online', onOnline);
     window.addEventListener('offline', onOnline);
     const subscription = api.cloud?.auth.onAuthStateChange((event) => {
-      if (event === 'SIGNED_OUT')
-        setIdentity((current) => (current?.mode === 'live' ? null : current));
+      if (event === 'SIGNED_OUT') {
+        if (sessionStorage.getItem('pb-attendance-demo-actor') === api.demoAdminId)
+          sessionStorage.removeItem('pb-attendance-demo-actor');
+        generation.current++;
+        setIdentity((current) =>
+          current?.mode === 'live' || current?.adminSessionId ? null : current,
+        );
+      }
     });
     return () => {
+      cancelled = true;
       clearInterval(timer);
       window.removeEventListener('online', onOnline);
       window.removeEventListener('offline', onOnline);
@@ -334,8 +345,22 @@ export default function App() {
   async function refresh() {
     if (!identity) return;
     const request = ++generation.current;
-    const result = await api.load(identity.mode, identity.id, month);
-    if (generation.current === request) setData(result);
+    try {
+      const result = await api.load(identity.mode, identity.id, month);
+      if (generation.current === request) setData(result);
+    } catch (e) {
+      if (
+        generation.current === request &&
+        identity.mode === 'demo' &&
+        identity.id === api.demoAdminId
+      ) {
+        sessionStorage.removeItem('pb-attendance-demo-actor');
+        setData(null);
+        setEditor(null);
+        setIdentity(null);
+      }
+      throw e;
+    }
   }
   useEffect(() => {
     setData(null);
@@ -346,7 +371,7 @@ export default function App() {
     };
   }, [identity, month]);
   useEffect(() => {
-    if (identity?.mode !== 'live') return;
+    if (identity?.mode !== 'live' && !identity?.adminSessionId) return;
     const timer = setInterval(() => {
       if (document.visibilityState === 'visible' && navigator.onLine)
         refresh().catch((e) => setError(e.message));
@@ -373,18 +398,42 @@ export default function App() {
       setBusy(false);
     }
   }
-  function enter(id: string, mode: api.Mode) {
+  function enter(id: string, mode: api.Mode, adminSessionId?: string) {
+    generation.current++;
+    setData(null);
     setPage('today');
     setMonth(dateKey().slice(0, 7));
     setStaffFilter('all');
     setError('');
     setNotice('');
-    setIdentity({ id, mode });
+    setIdentity({ id, mode, adminSessionId });
+  }
+  async function openAdminDemo() {
+    if (identity?.mode !== 'live') return;
+    setBusy(true);
+    setError('');
+    try {
+      const adminSessionId = await api.requireLiveAdmin();
+      sessionStorage.setItem('pb-attendance-demo-actor', api.demoAdminId);
+      setMenu(false);
+      enter(api.demoAdminId, 'demo', adminSessionId);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  function leaveAdminDemo() {
+    if (!identity?.adminSessionId) return;
+    sessionStorage.removeItem('pb-attendance-demo-actor');
+    setMenu(false);
+    setEditor(null);
+    enter(identity.adminSessionId, 'live');
   }
   async function signOut() {
     setBusy(true);
     try {
-      if (identity?.mode === 'live') {
+      if (identity?.mode === 'live' || identity?.adminSessionId) {
         const result = await api.cloud!.auth.signOut();
         if (result.error) throw result.error;
       }
@@ -411,8 +460,8 @@ export default function App() {
     return (
       <Login
         onEnter={(id) => enter(id, 'live')}
-        onDemo={(admin) => {
-          const id = admin ? api.demoAdminId : api.demoStaffId;
+        onDemo={() => {
+          const id = api.demoStaffId;
           sessionStorage.setItem('pb-attendance-demo-actor', id);
           enter(id, 'demo');
         }}
@@ -517,6 +566,12 @@ export default function App() {
                 {page === n.id && <span className="nav-dot" />}
               </button>
             ))}
+          {isAdmin && identity.mode === 'live' && (
+            <button disabled={busy} onClick={openAdminDemo}>
+              <FlaskConical size={20} />
+              Admin demo
+            </button>
+          )}
         </nav>
         <div className="sidebar-bottom">
           <div className="sidebar-location">
@@ -582,16 +637,11 @@ export default function App() {
                 <span className="demo-tag">DEMO</span> You’re exploring the{' '}
                 {isAdmin ? 'admin' : 'staff'} workspace. All data and GPS actions are simulated.
               </span>
-              <button
-                disabled={busy}
-                onClick={() => {
-                  const id = isAdmin ? api.demoStaffId : api.demoAdminId;
-                  sessionStorage.setItem('pb-attendance-demo-actor', id);
-                  enter(id, 'demo');
-                }}
-              >
-                Try {isAdmin ? 'staff' : 'admin'} view
-              </button>
+              {identity.adminSessionId && (
+                <button disabled={busy} onClick={leaveAdminDemo}>
+                  Return to admin
+                </button>
+              )}
             </div>
           )}
           {!online && (

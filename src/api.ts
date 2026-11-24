@@ -22,6 +22,21 @@ const DEMO_KEY = 'pb-attendance-demo-v1';
 export const demoAdminId = '11111111-1111-4111-8111-111111111111';
 export const demoStaffId = '22222222-2222-4222-8222-222222222222';
 
+export async function requireLiveAdmin(): Promise<string> {
+  if (!cloud) throw Error('Sign in to an administrator account to open the admin demo.');
+  const { data: auth, error: authError } = await cloud.auth.getUser();
+  if (authError || !auth.user)
+    throw Error('Sign in to an administrator account to open the admin demo.');
+  const { data: staff, error } = await cloud
+    .from('pb_staff')
+    .select('role,active')
+    .eq('id', auth.user.id)
+    .single();
+  if (error || !staff?.active || staff.role !== 'admin')
+    throw Error('Only active administrators can open the admin demo.');
+  return auth.user.id;
+}
+
 function sample(): Snapshot {
   const staff: Staff[] = [
     {
@@ -143,12 +158,16 @@ async function rpc(name: string, args: Record<string, unknown>) {
   if (error) throw Error(error.message);
   return data;
 }
-function requireDemoAdmin(actor: string, state: Snapshot) {
+async function requireDemoAdmin(actor: string, state: Snapshot) {
   if (!state.staff.some((p) => p.id === actor && p.active && p.role === 'admin'))
     throw Error('Admin access required.');
+  await requireLiveAdmin();
 }
 export async function load(mode: Mode, actor: string, month: string): Promise<Snapshot> {
-  if (mode === 'demo') return readDemo();
+  if (mode === 'demo') {
+    if (actor === demoAdminId) await requireLiveAdmin();
+    return readDemo();
+  }
   const [year, monthNumber] = month.split('-').map(Number);
   const upper = dateKey(new Date(Date.UTC(year, monthNumber, 1, 6, 30)));
   const [staff, days, settingsResult, auditResult] = await Promise.all([
@@ -190,6 +209,7 @@ export async function punch(mode: Mode, actor: string, action: Punch, fix?: Fix)
       p_captured_at: fix!.captured_at,
     });
   const state = readDemo();
+  if (actor === demoAdminId) await requireLiveAdmin();
   const staff = state.staff.find((p) => p.id === actor && p.active);
   if (!staff) throw Error('Staff account inactive.');
   if (fix) validateFix(fix, state.settings);
@@ -244,7 +264,7 @@ export async function correct(mode: Mode, actor: string, c: Correction) {
       p_reason: c.reason,
     });
   const state = readDemo();
-  requireDemoAdmin(actor, state);
+  await requireDemoAdmin(actor, state);
   if (c.reason.trim().length < 5) throw Error('Give a correction reason of at least 5 characters.');
   const start = Date.parse(c.check_in),
     end = c.check_out ? Date.parse(c.check_out) : null;
@@ -314,7 +334,7 @@ export async function saveStaff(mode: Mode, actor: string, staff: Staff, reason:
       p_reason: reason,
     });
   const state = readDemo();
-  requireDemoAdmin(actor, state);
+  await requireDemoAdmin(actor, state);
   if (staff.id === actor && (!staff.active || staff.role !== 'admin'))
     throw Error('You cannot deactivate or demote your own admin account.');
   const previous = state.staff.find((p) => p.id === staff.id);
@@ -341,7 +361,7 @@ export async function saveSettings(mode: Mode, actor: string, settings: Settings
       p_reason: reason,
     });
   const state = readDemo();
-  requireDemoAdmin(actor, state);
+  await requireDemoAdmin(actor, state);
   if (state.settings.version !== settings.version)
     throw Error('Settings changed. Refresh and try again.');
   const previous = state.settings;

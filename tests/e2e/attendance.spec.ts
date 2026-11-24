@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { openAdminDemo } from './auth';
 test('login and attendance fit a narrow phone with readable work-time records', async ({
   page,
 }) => {
@@ -47,8 +48,7 @@ test('staff can mark a shift and lunch, with undecided payable hours clearly lab
 test('admin corrects missed arrival and lunch, edits staff and sees the audit record', async ({
   page,
 }) => {
-  await page.goto('/');
-  await page.getByRole('button', { name: 'Admin demo', exact: true }).click();
+  const auth = await openAdminDemo(page);
   await page.getByRole('button', { name: 'Open menu' }).click();
   await page.getByRole('button', { name: 'Attendance', exact: true }).click();
   await page.getByRole('button', { name: 'Add attendance', exact: true }).click();
@@ -86,10 +86,10 @@ test('admin corrects missed arrival and lunch, edits staff and sees the audit re
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole('button', { name: 'Overview', exact: true }).click();
   await page.screenshot({ path: 'test-results/admin-desktop.png', fullPage: true });
+  expect(auth.writes).toBe(0);
 });
 test('lunch remains undecided until admin explicitly configures a policy', async ({ page }) => {
-  await page.goto('/');
-  await page.getByRole('button', { name: 'Admin demo', exact: true }).click();
+  await openAdminDemo(page);
   await page.getByRole('button', { name: 'Open menu' }).click();
   await page.getByRole('button', { name: 'Shop settings', exact: true }).click();
   await expect(page.getByLabel('How should lunch be handled?')).toHaveValue('pending');

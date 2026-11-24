@@ -29,7 +29,11 @@ npm ci
 npm run dev
 ```
 
-Run these commands at the attendance repository root. If using the original development copy inside the inventory workspace, enter its `attendance` directory first. Open the printed localhost URL. Choose **Staff demo** or **Admin demo** to try the complete interface without a backend. Demo records persist in this browser under a separate `pb-attendance-demo-v1` key. Demo GPS actions are explicitly simulated and never write to Supabase. Live connection errors never fall back to demo data.
+Run these commands at the attendance repository root. If using the original development copy inside the inventory workspace, enter its `attendance` directory first. Open the printed localhost URL. **Staff demo** is available on the public sign-in page. To open **Admin demo**, sign in with an active Supabase administrator account, then select **Admin demo** in the admin navigation. Use **Return to admin** to leave the preview without signing out.
+
+The admin demo checks the authenticated user and active administrator role before opening, restoring a saved preview, or making demo changes. Public staff demos cannot switch to the admin demo. Signing out ends the administrator's real session and closes the preview; an old demo marker cannot restore it without a valid administrator session.
+
+Demo records persist in this browser under a separate `pb-attendance-demo-v1` key. Demo GPS actions are explicitly simulated and never write to Supabase. Live connection errors never fall back to demo data.
 
 For a fresh demo, remove only the `pb-attendance-demo-v1` localStorage key and the `pb-attendance-demo-actor` sessionStorage key on the attendance origin. Do not clear the inventory application's storage.
 
@@ -114,6 +118,6 @@ $env:PLAYWRIGHT_CHROMIUM_EXECUTABLE = 'C:\Program Files\Google\Chrome\Applicatio
 npm run test:e2e
 ```
 
-Domain tests cover exact durations, lunch policies, overnight calculations, IST boundaries, GPS rejection and safe CSV formatting. Database tests execute the migration in a disposable PostgreSQL engine and exercise authorization, RLS on the summary view, server GPS validation, break transitions, corrections, audit preservation and policy snapshots. Browser tests exercise demo workflows at phone and desktop widths. These checks do not validate hosted Supabase Auth, production RLS configuration, real phone GPS or a deployed Vercel instance.
+Domain tests cover exact durations, lunch policies, overnight calculations, IST boundaries, GPS rejection and safe CSV formatting. Database tests execute the migration in a disposable PostgreSQL engine and exercise authorization, RLS on the summary view, server GPS validation, break transitions, corrections, audit preservation and policy snapshots. Browser tests exercise phone and desktop workflows, including administrator sign-in, demo access, saved-session checks, staff restrictions and logout, against mocked Supabase responses. Playwright builds a separate `dist-e2e` with a test-only API URL; the production build uses your configured Supabase environment. These checks do not validate hosted Supabase Auth, production RLS configuration, real phone GPS or a deployed Vercel instance.
 
 Implementation references: [Supabase RLS](https://supabase.com/docs/guides/database/postgres/row-level-security), [database functions](https://supabase.com/docs/guides/database/functions), [Vite on Vercel](https://vercel.com/docs/frameworks/frontend/vite), [browser GPS accuracy](https://developer.mozilla.org/en-US/docs/Web/API/GeolocationCoordinates/accuracy).

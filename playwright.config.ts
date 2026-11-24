@@ -10,8 +10,9 @@ export default defineConfig({
     launchOptions: { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined },
   },
   webServer: {
-    command: 'npm run preview',
+    command:
+      'npm run build -- --mode e2e --outDir dist-e2e && npm run preview -- --outDir dist-e2e --strictPort',
     url: 'http://127.0.0.1:4180',
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
   },
 });
